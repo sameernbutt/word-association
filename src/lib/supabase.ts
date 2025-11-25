@@ -12,6 +12,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 export interface Game {
     id: string;
     current_word: string;
+    used_words?: string[];
     status: 'waiting' | 'playing' | 'finished';
     created_at: string;
     updated_at: string;
