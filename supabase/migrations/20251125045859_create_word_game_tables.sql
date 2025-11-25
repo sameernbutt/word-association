@@ -33,6 +33,8 @@
 CREATE TABLE IF NOT EXISTS games (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   current_word text NOT NULL,
+  -- track words already used in this game to avoid repeats until all words are used
+  used_words text[] DEFAULT '{}',
   status text DEFAULT 'waiting',
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()

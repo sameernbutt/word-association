@@ -135,7 +135,7 @@ function App() {
                 const firstWord = words.length > 0 ? getRandomWord(words) : 'loading';
                 await supabase
                   .from('games')
-                  .update({ current_word: firstWord, status: 'playing' })
+                  .update({ current_word: firstWord, status: 'playing', used_words: [firstWord] })
                   .eq('id', gameId);
                 setCurrentWord(firstWord);
                 setGameState('playing');
@@ -225,11 +225,30 @@ function App() {
       // Only player 1 should update the word to avoid race conditions
       if (submissions[0].player_id === playerId) {
         setTimeout(async () => {
-          const nextWord = getRandomWord(words, currentWord);
-          console.log('Player 1 generating next word:', nextWord);
+          // Fetch game's used_words to avoid repeats
+          const { data: gameRecord } = await supabase
+            .from('games')
+            .select('used_words')
+            .eq('id', gameId)
+            .single();
+
+          const used: string[] = (gameRecord && (gameRecord as any).used_words) || [];
+          let unused = words.filter(w => !used.includes(w));
+
+          // If all words used, reset
+          let newUsed: string[] = [];
+          if (unused.length === 0) {
+            unused = [...words];
+            newUsed = [];
+          }
+
+          const nextWord = getRandomWord(unused, currentWord);
+          newUsed = [...newUsed, nextWord];
+
+          console.log('Player 1 generating next word:', nextWord, 'used before:', used);
           await supabase
             .from('games')
-            .update({ current_word: nextWord, updated_at: new Date().toISOString() })
+            .update({ current_word: nextWord, updated_at: new Date().toISOString(), used_words: [...used, nextWord] })
             .eq('id', gameId);
           setCurrentWord(nextWord);
           setMatchResult(null);
@@ -300,7 +319,7 @@ function App() {
             const firstWord = words.length > 0 ? getRandomWord(words) : existingGame.current_word;
             await supabase
               .from('games')
-              .update({ current_word: firstWord, status: 'playing' })
+              .update({ current_word: firstWord, status: 'playing', used_words: [firstWord] })
               .eq('id', gameId);
             setCurrentWord(firstWord);
             setGameState('playing');
@@ -319,7 +338,7 @@ function App() {
       const firstWord = words.length > 0 ? getRandomWord(words) : 'loading';
       const { data: newGame } = await supabase
         .from('games')
-        .insert({ current_word: firstWord, status: 'waiting' })
+        .insert({ current_word: firstWord, status: 'waiting', used_words: [firstWord] })
         .select()
         .single();
 
@@ -374,30 +393,14 @@ function App() {
     setTimeout(() => checkSubmissions(), 500);
   };
 
-  const [logs, setLogs] = useState<string[]>([]);
-  const addLog = (msg: string) => setLogs(prev => [...prev.slice(-4), msg]);
-
-  useEffect(() => {
-    const originalLog = console.log;
-    console.log = (...args) => {
-      addLog(args.map(a => JSON.stringify(a)).join(' '));
-      originalLog(...args);
-    };
-    return () => { console.log = originalLog; };
-  }, []);
+  // Logging goes to the browser console by default.
 
   return (
     <div
       className="min-h-screen transition-colors duration-300"
       style={{ backgroundColor: isDarkMode ? '#1a1a1a' : '#ffffff' }}
     >
-      <div style={{ position: 'fixed', top: 0, left: 0, background: 'rgba(0,0,0,0.8)', color: 'white', zIndex: 9999, fontSize: '10px', pointerEvents: 'none' }}>
-        <div>State: {gameState}</div>
-        <div>Players: {playerCount}</div>
-        <div>GameID: {gameId}</div>
-        <div>Logs:</div>
-        {logs.map((l, i) => <div key={i}>{l}</div>)}
-      </div>
+      {/* Debug overlay removed — logs now appear in the browser console */}
       {gameState === 'join' && <JoinGame onJoin={handleJoin} isDarkMode={isDarkMode} />}
       {gameState === 'waiting' && (
         <WaitingRoom
