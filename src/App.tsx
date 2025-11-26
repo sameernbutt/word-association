@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Moon, Sun } from 'lucide-react';
-import { supabase, Game, Player, Submission } from './lib/supabase';
+import { supabase, Game, Player, Submission, RoundAction } from './lib/supabase';
 import { loadWords, getRandomWord } from './lib/gameUtils';
 import JoinGame from './components/JoinGame';
 import WaitingRoom from './components/WaitingRoom';
@@ -25,6 +25,8 @@ function App() {
   const [hasSubmitted, setHasSubmitted] = useState<boolean>(false);
   const [waitingForOther, setWaitingForOther] = useState<boolean>(false);
   const [matchResult, setMatchResult] = useState<{ matched: boolean; player1Word: string; player2Word: string } | null>(null);
+  const [nextButtonState, setNextButtonState] = useState<'idle' | 'waiting'>('idle');
+  const [overrideButtonState, setOverrideButtonState] = useState<'idle' | 'waiting'>('idle');
 
   useEffect(() => {
     loadWords().then(setWords);
@@ -83,12 +85,20 @@ function App() {
         .eq('id', gameId)
         .single();
 
-      if (game && game.current_word !== currentWord) {
-        console.log('Poll: word changed from', currentWord, 'to', game.current_word);
-        setCurrentWord(game.current_word);
-        setMatchResult(null);
-        setHasSubmitted(false);
-        setWaitingForOther(false);
+      if (game) {
+        // Use a function to get the latest state value to avoid stale closure
+        setCurrentWord(prevWord => {
+          if (game.current_word !== prevWord) {
+            console.log('Poll: word changed from', prevWord, 'to', game.current_word);
+            setMatchResult(null);
+            setHasSubmitted(false);
+            setWaitingForOther(false);
+            setNextButtonState('idle');
+            setOverrideButtonState('idle');
+            return game.current_word;
+          }
+          return prevWord;
+        });
       }
     };
 
@@ -98,6 +108,12 @@ function App() {
       pollInterval = setInterval(pollGameStatus, 1000);
     } else if (gameState === 'playing' && (hasSubmitted || waitingForOther)) {
       pollInterval = setInterval(pollSubmissions, 1000);
+    } else if (gameState === 'playing' && matchResult) {
+      // Poll for both round actions AND word changes when match result is shown
+      pollInterval = setInterval(async () => {
+        await checkRoundActions();
+        await pollCurrentWord();
+      }, 1000);
     } else if (gameState === 'playing') {
       pollInterval = setInterval(pollCurrentWord, 1000);
     }
@@ -163,7 +179,17 @@ function App() {
         async (payload) => {
           console.log('Game channel event', payload);
           const game = payload.new as Game;
-          setCurrentWord(game.current_word);
+          const oldGame = payload.old as Game;
+          // If the word changed, reset all states for the new round
+          if (game.current_word !== oldGame.current_word) {
+            console.log('Word changed from', oldGame.current_word, 'to', game.current_word);
+            setCurrentWord(game.current_word);
+            setMatchResult(null);
+            setHasSubmitted(false);
+            setWaitingForOther(false);
+            setNextButtonState('idle');
+            setOverrideButtonState('idle');
+          }
           if (game.status === 'playing') {
             console.log('Game status changed to playing');
             setGameState('playing');
@@ -189,13 +215,31 @@ function App() {
       )
       .subscribe();
 
+    const roundActionsChannel = supabase
+      .channel(`game:${gameId}:round_actions`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'round_actions',
+          filter: `game_id=eq.${gameId}`,
+        },
+        async (payload) => {
+          console.log('Round actions channel event', payload.eventType);
+          await checkRoundActions();
+        }
+      )
+      .subscribe();
+
     return () => {
       if (pollInterval) clearInterval(pollInterval);
       playersChannel.unsubscribe();
       gameChannel.unsubscribe();
       submissionsChannel.unsubscribe();
+      roundActionsChannel.unsubscribe();
     };
-  }, [gameId, words, gameState, hasSubmitted, waitingForOther, currentWord]);
+  }, [gameId, words, gameState, hasSubmitted, waitingForOther, currentWord, matchResult, playerId]);
 
 
   const checkSubmissions = async () => {
@@ -222,50 +266,247 @@ function App() {
       setHasSubmitted(false);
       setWaitingForOther(false);
 
-      // Only player 1 should update the word to avoid race conditions
-      if (submissions[0].player_id === playerId) {
-        setTimeout(async () => {
-          // Fetch game's used_words to avoid repeats
-          const { data: gameRecord } = await supabase
-            .from('games')
-            .select('used_words')
-            .eq('id', gameId)
-            .single();
-
-          const used: string[] = (gameRecord && (gameRecord as any).used_words) || [];
-          let unused = words.filter(w => !used.includes(w));
-
-          // If all words used, reset
-          let newUsed: string[] = [];
-          if (unused.length === 0) {
-            unused = [...words];
-            newUsed = [];
-          }
-
-          const nextWord = getRandomWord(unused, currentWord);
-          newUsed = [...newUsed, nextWord];
-
-          console.log('Player 1 generating next word:', nextWord, 'used before:', used);
-          await supabase
-            .from('games')
-            .update({ current_word: nextWord, updated_at: new Date().toISOString(), used_words: [...used, nextWord] })
-            .eq('id', gameId);
-          setCurrentWord(nextWord);
-          setMatchResult(null);
-        }, 3000);
-      } else {
-        // Player 2 just waits for the word update
-        setTimeout(() => {
-          console.log('Player 2 clearing match result, waiting for new word');
-          setMatchResult(null);
-        }, 3000);
-      }
+      // Check for round actions to see if both players have clicked a button
+      await checkRoundActions();
     } else if (submissions && submissions.length === 1) {
       const mySubmission = submissions.find(s => s.player_id === playerId);
       if (mySubmission) {
         setWaitingForOther(true);
       }
     }
+  };
+
+  const checkRoundActions = async () => {
+    if (!gameId || !currentWord) return;
+
+    const { data: actions } = await supabase
+      .from('round_actions')
+      .select('*')
+      .eq('game_id', gameId)
+      .eq('word', currentWord);
+
+    if (!actions) return;
+
+    // Count actions by type FIRST before any other logic
+    const nextActions = actions.filter(a => a.action === 'next');
+    const overrideActions = actions.filter(a => a.action === 'override');
+
+    console.log('checkRoundActions: total actions:', actions.length, 'next:', nextActions.length, 'override:', overrideActions.length);
+
+    // If both players clicked override, update the match result to show as matched
+    // And reset both button states so they can click Next
+    if (overrideActions.length === 2) {
+      console.log('Both players clicked override, updating match result to matched');
+      setMatchResult(prev => prev ? { ...prev, matched: true } : null);
+      setNextButtonState('idle');
+      setOverrideButtonState('idle');
+      
+      // Only one player should delete to avoid race conditions
+      const { data: players } = await supabase
+        .from('players')
+        .select('*')
+        .eq('game_id', gameId)
+        .order('player_number', { ascending: true });
+      
+      const isPlayer1 = players && players[0]?.id === playerId;
+      if (isPlayer1) {
+        console.log('Player 1 deleting override actions');
+        await supabase
+          .from('round_actions')
+          .delete()
+          .eq('game_id', gameId)
+          .eq('word', currentWord)
+          .eq('action', 'override');
+      }
+      return;
+    }
+
+    // If both players clicked next, proceed to next word
+    if (nextActions.length === 2) {
+      console.log('Both players clicked next, proceeding to next word');
+      // Only player 1 should update the database to avoid race conditions
+      const { data: players } = await supabase
+        .from('players')
+        .select('*')
+        .eq('game_id', gameId)
+        .order('player_number', { ascending: true });
+
+      const isPlayer1 = players && players[0]?.id === playerId;
+
+      if (isPlayer1) {
+        // Fetch game's used_words to avoid repeats
+        const { data: gameRecord } = await supabase
+          .from('games')
+          .select('used_words')
+          .eq('id', gameId)
+          .single();
+
+        const used: string[] = (gameRecord && (gameRecord as any).used_words) || [];
+        let unused = words.filter(w => !used.includes(w));
+
+        // If all words used, reset
+        if (unused.length === 0) {
+          unused = [...words];
+        }
+
+        const nextWord = getRandomWord(unused, currentWord);
+
+        console.log('Player 1 generating next word:', nextWord, 'used before:', used);
+        
+        // Delete round actions for this word FIRST to clean up
+        await supabase
+          .from('round_actions')
+          .delete()
+          .eq('game_id', gameId)
+          .eq('word', currentWord);
+
+        // Then update the game with the new word
+        await supabase
+          .from('games')
+          .update({ current_word: nextWord, updated_at: new Date().toISOString(), used_words: [...used, nextWord] })
+          .eq('id', gameId);
+
+        setCurrentWord(nextWord);
+        setMatchResult(null);
+        setNextButtonState('idle');
+        setOverrideButtonState('idle');
+      }
+      return;
+    }
+
+    // If one player clicked override and one clicked next, treat it as both clicking next
+    // (override didn't succeed, so just move on)
+    if (overrideActions.length === 1 && nextActions.length === 1) {
+      console.log('Mixed actions (one override, one next), proceeding as next');
+      const { data: players } = await supabase
+        .from('players')
+        .select('*')
+        .eq('game_id', gameId)
+        .order('player_number', { ascending: true });
+
+      const isPlayer1 = players && players[0]?.id === playerId;
+
+      if (isPlayer1) {
+        const { data: gameRecord } = await supabase
+          .from('games')
+          .select('used_words')
+          .eq('id', gameId)
+          .single();
+
+        const used: string[] = (gameRecord && (gameRecord as any).used_words) || [];
+        let unused = words.filter(w => !used.includes(w));
+
+        if (unused.length === 0) {
+          unused = [...words];
+        }
+
+        const nextWord = getRandomWord(unused, currentWord);
+
+        console.log('Player 1 generating next word (mixed actions):', nextWord);
+        
+        await supabase
+          .from('round_actions')
+          .delete()
+          .eq('game_id', gameId)
+          .eq('word', currentWord);
+
+        await supabase
+          .from('games')
+          .update({ current_word: nextWord, updated_at: new Date().toISOString(), used_words: [...used, nextWord] })
+          .eq('id', gameId);
+
+        setCurrentWord(nextWord);
+        setMatchResult(null);
+        setNextButtonState('idle');
+        setOverrideButtonState('idle');
+      }
+      return;
+    }
+
+    // If no actions exist (after deletion), just reset button states
+    // The match result was already updated when we detected 2 overrides
+    if (actions.length === 0) {
+      console.log('No actions found, resetting button states only');
+      setNextButtonState('idle');
+      setOverrideButtonState('idle');
+      return;
+    }
+
+    // Only one action from one player - show waiting state for the player who clicked
+    const myAction = actions.find(a => a.player_id === playerId);
+    if (myAction) {
+      if (myAction.action === 'next') {
+        setNextButtonState('waiting');
+        setOverrideButtonState('idle');
+      } else if (myAction.action === 'override') {
+        setOverrideButtonState('waiting');
+        setNextButtonState('idle');
+      }
+    } else {
+      // No action from current player yet, keep buttons enabled
+      setNextButtonState('idle');
+      setOverrideButtonState('idle');
+    }
+  };
+
+  const handleNextClick = async () => {
+    if (!gameId || !playerId || !currentWord) return;
+
+    // Check if already submitted an action
+    const { data: existingAction } = await supabase
+      .from('round_actions')
+      .select('*')
+      .eq('game_id', gameId)
+      .eq('player_id', playerId)
+      .eq('word', currentWord)
+      .maybeSingle();
+
+    if (existingAction) return;
+
+    // Insert the action
+    await supabase
+      .from('round_actions')
+      .insert({
+        game_id: gameId,
+        player_id: playerId,
+        word: currentWord,
+        action: 'next',
+      });
+
+    setNextButtonState('waiting');
+
+    // Check if both players have now clicked
+    setTimeout(() => checkRoundActions(), 500);
+  };
+
+  const handleOverrideClick = async () => {
+    if (!gameId || !playerId || !currentWord) return;
+
+    // Check if already submitted an action
+    const { data: existingAction } = await supabase
+      .from('round_actions')
+      .select('*')
+      .eq('game_id', gameId)
+      .eq('player_id', playerId)
+      .eq('word', currentWord)
+      .maybeSingle();
+
+    if (existingAction) return;
+
+    // Insert the action
+    await supabase
+      .from('round_actions')
+      .insert({
+        game_id: gameId,
+        player_id: playerId,
+        word: currentWord,
+        action: 'override',
+      });
+
+    setOverrideButtonState('waiting');
+
+    // Check if both players have now clicked
+    setTimeout(() => checkRoundActions(), 500);
   };
 
   const handleJoin = async (name: string) => {
@@ -419,6 +660,10 @@ function App() {
           waitingForOther={waitingForOther}
           matchResult={matchResult}
           isDarkMode={isDarkMode}
+          onNextClick={handleNextClick}
+          onOverrideClick={handleOverrideClick}
+          nextButtonState={nextButtonState}
+          overrideButtonState={overrideButtonState}
         />
       )}
       {/* Dark mode toggle */}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Sparkles, X } from 'lucide-react';
+import { Sparkles, X, ArrowRight, RefreshCw } from 'lucide-react';
 
 interface GamePlayProps {
     currentWord: string;
@@ -9,6 +9,10 @@ interface GamePlayProps {
     waitingForOther: boolean;
     matchResult: { matched: boolean; player1Word: string; player2Word: string } | null;
     isDarkMode: boolean;
+    onNextClick?: () => void;
+    onOverrideClick?: () => void;
+    nextButtonState?: 'idle' | 'waiting';
+    overrideButtonState?: 'idle' | 'waiting';
 }
 
 export default function GamePlay({
@@ -19,6 +23,10 @@ export default function GamePlay({
     waitingForOther,
     matchResult,
     isDarkMode,
+    onNextClick,
+    onOverrideClick,
+    nextButtonState = 'idle',
+    overrideButtonState = 'idle',
 }: GamePlayProps) {
     const [inputWord, setInputWord] = useState('');
 
@@ -66,10 +74,47 @@ export default function GamePlay({
                                 </div>
                             </div>
                         )}
+                        
+                        {/* Action buttons */}
+                        <div className="flex justify-center gap-4 mt-6">
+                            {/* Override button - only show if not a match */}
+                            {!matchResult.matched && (
+                                <button
+                                    onClick={onOverrideClick}
+                                    disabled={overrideButtonState === 'waiting' || nextButtonState === 'waiting'}
+                                    className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 flex items-center gap-2
+                                        ${overrideButtonState === 'waiting'
+                                            ? `opacity-50 cursor-not-allowed ${isDarkMode ? 'bg-yellow-800 text-yellow-300' : 'bg-yellow-100 text-yellow-700'}`
+                                            : `${isDarkMode ? 'bg-yellow-600 hover:bg-yellow-700 text-white' : 'bg-yellow-500 hover:bg-yellow-600 text-white'}`
+                                        }
+                                        ${nextButtonState === 'waiting' ? 'opacity-50 cursor-not-allowed' : ''}
+                                    `}
+                                >
+                                    <RefreshCw className={`w-5 h-5 ${overrideButtonState === 'waiting' ? 'animate-spin' : ''}`} />
+                                    {overrideButtonState === 'waiting' ? 'Waiting...' : 'Override'}
+                                </button>
+                            )}
+                            
+                            {/* Next button */}
+                            <button
+                                onClick={onNextClick}
+                                disabled={nextButtonState === 'waiting' || overrideButtonState === 'waiting'}
+                                className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 flex items-center gap-2
+                                    ${nextButtonState === 'waiting'
+                                        ? `opacity-50 cursor-not-allowed ${isDarkMode ? 'bg-blue-800 text-blue-300' : 'bg-blue-100 text-blue-700'}`
+                                        : `${isDarkMode ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`
+                                    }
+                                    ${overrideButtonState === 'waiting' ? 'opacity-50 cursor-not-allowed' : ''}
+                                `}
+                            >
+                                <ArrowRight className={`w-5 h-5 ${nextButtonState === 'waiting' ? 'animate-pulse' : ''}`} />
+                                {nextButtonState === 'waiting' ? 'Waiting...' : 'Next'}
+                            </button>
+                        </div>
                     </div>
                 ) : null}
 
-                <div className={`bg-gradient-to-r from-blue-100 to-indigo-100 rounded-xl p-8 mb-8 ${isDarkMode ? 'from-gray-700 to-gray-600' : 'from-blue-100 to-indigo-100'}`}>
+                <div className={`bg-gradient-to-r from-blue-100 to-indigo-100 rounded-xl p-8 mb-8 ${isDarkMode ? 'from-gray-800 to-gray-700' : 'from-blue-100 to-indigo-100'}`}>
                     <p className={`text-sm ${isDarkMode ? 'text-gray-200' : 'text-gray-600'} text-center mb-2`}>Current Word:</p>
                     <h2 className={`text-5xl font-bold text-center ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
                         {currentWord}
@@ -88,7 +133,7 @@ export default function GamePlay({
                             Submitted! Waiting for other player...
                         </div>
                     </div>
-                ) : (
+                ) : !matchResult ? (
                     <form onSubmit={handleSubmit}>
                         <div className="mb-4">
                             <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-200' : 'text-gray-700'} mb-2`}>
@@ -111,7 +156,7 @@ export default function GamePlay({
                             Submit
                         </button>
                     </form>
-                )}
+                ) : null}
             </div>
         </div>
     );
