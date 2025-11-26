@@ -34,3 +34,12 @@ export interface Submission {
     submission_word: string;
     created_at: string;
 }
+
+export interface RoundAction {
+    id: string;
+    game_id: string;
+    player_id: string;
+    word: string;
+    action: 'next' | 'override';
+    created_at: string;
+}
