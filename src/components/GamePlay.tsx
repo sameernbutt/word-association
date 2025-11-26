@@ -114,7 +114,7 @@ export default function GamePlay({
                     </div>
                 ) : null}
 
-                <div className={`bg-gradient-to-r from-blue-100 to-indigo-100 rounded-xl p-8 mb-8 ${isDarkMode ? 'from-gray-700 to-gray-600' : 'from-blue-100 to-indigo-100'}`}>
+                <div className={`bg-gradient-to-r from-blue-100 to-indigo-100 rounded-xl p-8 mb-8 ${isDarkMode ? 'from-gray-800 to-gray-700' : 'from-blue-100 to-indigo-100'}`}>
                     <p className={`text-sm ${isDarkMode ? 'text-gray-200' : 'text-gray-600'} text-center mb-2`}>Current Word:</p>
                     <h2 className={`text-5xl font-bold text-center ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
                         {currentWord}
