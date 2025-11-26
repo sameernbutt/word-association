@@ -27,6 +27,11 @@ function App() {
   const [matchResult, setMatchResult] = useState<{ matched: boolean; player1Word: string; player2Word: string } | null>(null);
   const [nextButtonState, setNextButtonState] = useState<'idle' | 'waiting'>('idle');
   const [overrideButtonState, setOverrideButtonState] = useState<'idle' | 'waiting'>('idle');
+  const [matchCount, setMatchCount] = useState<number>(0);
+  const [noMatchCount, setNoMatchCount] = useState<number>(0);
+  const [lastScoredWord, setLastScoredWord] = useState<string | null>(null);
+  const [lastOverriddenWord, setLastOverriddenWord] = useState<string | null>(null);
+  const [myOverrideWord, setMyOverrideWord] = useState<string | null>(null);
 
   useEffect(() => {
     loadWords().then(setWords);
@@ -95,6 +100,7 @@ function App() {
             setWaitingForOther(false);
             setNextButtonState('idle');
             setOverrideButtonState('idle');
+            setMyOverrideWord(null);
             return game.current_word;
           }
           return prevWord;
@@ -189,6 +195,7 @@ function App() {
             setWaitingForOther(false);
             setNextButtonState('idle');
             setOverrideButtonState('idle');
+            setMyOverrideWord(null);
           }
           if (game.status === 'playing') {
             console.log('Game status changed to playing');
@@ -263,6 +270,16 @@ function App() {
         player2Word: submissions[1].submission_word,
       });
 
+      // Update score only once per word (when result is first determined)
+      if (lastScoredWord !== currentWord) {
+        setLastScoredWord(currentWord);
+        if (matched) {
+          setMatchCount(prev => prev + 1);
+        } else {
+          setNoMatchCount(prev => prev + 1);
+        }
+      }
+
       setHasSubmitted(false);
       setWaitingForOther(false);
 
@@ -298,6 +315,12 @@ function App() {
     if (overrideActions.length === 2) {
       console.log('Both players clicked override, updating match result to matched');
       setMatchResult(prev => prev ? { ...prev, matched: true } : null);
+      // Override: increment match count and decrement no-match count (only once per word)
+      if (lastOverriddenWord !== currentWord) {
+        setLastOverriddenWord(currentWord);
+        setMatchCount(prev => prev + 1);
+        setNoMatchCount(prev => Math.max(0, prev - 1));
+      }
       setNextButtonState('idle');
       setOverrideButtonState('idle');
       
@@ -370,6 +393,7 @@ function App() {
         setMatchResult(null);
         setNextButtonState('idle');
         setOverrideButtonState('idle');
+        setMyOverrideWord(null);
       }
       return;
     }
@@ -419,14 +443,23 @@ function App() {
         setMatchResult(null);
         setNextButtonState('idle');
         setOverrideButtonState('idle');
+        setMyOverrideWord(null);
       }
       return;
     }
 
-    // If no actions exist (after deletion), just reset button states
-    // The match result was already updated when we detected 2 overrides
+    // If no actions exist (after deletion), check if override was successful
+    // If we clicked override for this word and actions are now gone, the override succeeded
     if (actions.length === 0) {
-      console.log('No actions found, resetting button states only');
+      console.log('No actions found, checking if override succeeded');
+      if (myOverrideWord === currentWord && lastOverriddenWord !== currentWord) {
+        // We clicked override and actions were deleted = override succeeded
+        console.log('Override succeeded for this player, updating match result and score');
+        setMatchResult(prev => prev ? { ...prev, matched: true } : null);
+        setLastOverriddenWord(currentWord);
+        setMatchCount(prev => prev + 1);
+        setNoMatchCount(prev => Math.max(0, prev - 1));
+      }
       setNextButtonState('idle');
       setOverrideButtonState('idle');
       return;
@@ -503,6 +536,7 @@ function App() {
         action: 'override',
       });
 
+    setMyOverrideWord(currentWord);
     setOverrideButtonState('waiting');
 
     // Check if both players have now clicked
@@ -664,6 +698,8 @@ function App() {
           onOverrideClick={handleOverrideClick}
           nextButtonState={nextButtonState}
           overrideButtonState={overrideButtonState}
+          matchCount={matchCount}
+          noMatchCount={noMatchCount}
         />
       )}
       {/* Dark mode toggle */}
