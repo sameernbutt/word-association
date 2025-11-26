@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Sparkles, X, ArrowRight, RefreshCw } from 'lucide-react';
+import { Sparkles, X, ArrowRight, RefreshCw, Check } from 'lucide-react';
 
 interface GamePlayProps {
     currentWord: string;
@@ -13,6 +13,8 @@ interface GamePlayProps {
     onOverrideClick?: () => void;
     nextButtonState?: 'idle' | 'waiting';
     overrideButtonState?: 'idle' | 'waiting';
+    matchCount?: number;
+    noMatchCount?: number;
 }
 
 export default function GamePlay({
@@ -27,6 +29,8 @@ export default function GamePlay({
     onOverrideClick,
     nextButtonState = 'idle',
     overrideButtonState = 'idle',
+    matchCount = 0,
+    noMatchCount = 0,
 }: GamePlayProps) {
     const [inputWord, setInputWord] = useState('');
 
@@ -39,7 +43,33 @@ export default function GamePlay({
     };
 
     return (
-        <div className={`min-h-screen ${isDarkMode ? 'bg-gradient-to-br from-gray-900 to-gray-800' : 'bg-gradient-to-br from-blue-50 to-indigo-50'} flex items-center justify-center p-4`}>
+        <div className={`min-h-screen ${isDarkMode ? 'bg-gradient-to-br from-gray-900 to-gray-800' : 'bg-gradient-to-br from-blue-50 to-indigo-50'} flex flex-col items-center p-4`}>
+            {/* Scoreboard at the top */}
+            <div className={`w-full max-w-2xl mb-4 rounded-xl shadow-lg p-4 ${isDarkMode ? 'bg-gray-800' : 'bg-white'}`}>
+                <div className="flex justify-center items-center gap-8">
+                    <div className="flex items-center gap-2">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isDarkMode ? 'bg-green-900' : 'bg-green-100'}`}>
+                            <Check className="w-6 h-6 text-green-600" />
+                        </div>
+                        <div className="text-center">
+                            <p className={`text-xs uppercase tracking-wide ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Matches</p>
+                            <p className={`text-2xl font-bold ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>{matchCount}</p>
+                        </div>
+                    </div>
+                    <div className={`h-12 w-px ${isDarkMode ? 'bg-gray-600' : 'bg-gray-300'}`}></div>
+                    <div className="flex items-center gap-2">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isDarkMode ? 'bg-red-900' : 'bg-red-100'}`}>
+                            <X className="w-6 h-6 text-red-600" />
+                        </div>
+                        <div className="text-center">
+                            <p className={`text-xs uppercase tracking-wide ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>No Match</p>
+                            <p className={`text-2xl font-bold ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>{noMatchCount}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Main game card */}
             <div className={`rounded-2xl shadow-xl p-8 max-w-2xl w-full ${isDarkMode ? 'bg-gray-800' : 'bg-white'}`}>
                 <div className="text-center mb-8">
                     <p className={`text-sm ${isDarkMode ? 'text-gray-200' : 'text-gray-600'} mb-2`}>Playing as: {playerName}</p>
